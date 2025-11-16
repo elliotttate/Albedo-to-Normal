@@ -75,7 +75,8 @@ class AlbedoToNormalConverter:
         self,
         depth_map: np.ndarray,
         smooth_kernel_size: int = 5,
-        smooth_sigma: float = 1.0
+        smooth_sigma: float = 1.0,
+        depth_scale: float = 1.0
     ) -> np.ndarray:
         """
         Convert a depth map to a normal map
@@ -84,6 +85,7 @@ class AlbedoToNormalConverter:
             depth_map: 2D array of depth values (H, W)
             smooth_kernel_size: Size of Gaussian blur kernel (must be odd)
             smooth_sigma: Sigma value for Gaussian blur
+            depth_scale: Multiplier for depth gradients (higher = more pronounced normals)
 
         Returns:
             Normal map as uint8 RGB image (H, W, 3)
@@ -110,8 +112,8 @@ class AlbedoToNormalConverter:
 
         # Compute central differences for interior pixels
         # Nx = -(dZ/dx), Ny = -(dZ/dy)
-        Nx[1:-1, 1:-1] = -(depth[1:-1, 2:] - depth[1:-1, :-2]) * 0.5
-        Ny[1:-1, 1:-1] = -(depth[2:, 1:-1] - depth[:-2, 1:-1]) * 0.5
+        Nx[1:-1, 1:-1] = -(depth[1:-1, 2:] - depth[1:-1, :-2]) * 0.5 * depth_scale
+        Ny[1:-1, 1:-1] = -(depth[2:, 1:-1] - depth[:-2, 1:-1]) * 0.5 * depth_scale
 
         # Normalize the normal vectors
         norm = np.sqrt(Nx**2 + Ny**2 + Nz**2)
@@ -136,6 +138,7 @@ class AlbedoToNormalConverter:
         image: Image.Image,
         smooth_kernel_size: int = 5,
         smooth_sigma: float = 1.0,
+        depth_scale: float = 1.0,
         progress=None
     ) -> Tuple[Image.Image, Image.Image]:
         """
@@ -145,6 +148,7 @@ class AlbedoToNormalConverter:
             image: PIL Image (albedo texture)
             smooth_kernel_size: Smoothing kernel size
             smooth_sigma: Smoothing sigma
+            depth_scale: Depth intensity multiplier
             progress: Gradio progress callback
 
         Returns:
@@ -173,7 +177,8 @@ class AlbedoToNormalConverter:
         normal_map = self.depth_to_normal(
             depth,
             smooth_kernel_size=smooth_kernel_size,
-            smooth_sigma=smooth_sigma
+            smooth_sigma=smooth_sigma,
+            depth_scale=depth_scale
         )
 
         # Normalize depth for visualization
@@ -189,6 +194,7 @@ class AlbedoToNormalConverter:
         output_folder: str,
         smooth_kernel_size: int = 5,
         smooth_sigma: float = 1.0,
+        depth_scale: float = 1.0,
         save_depth: bool = True,
         progress=gr.Progress()
     ) -> Tuple[str, List[str]]:
@@ -200,6 +206,7 @@ class AlbedoToNormalConverter:
             output_folder: Output folder for generated maps
             smooth_kernel_size: Smoothing kernel size
             smooth_sigma: Smoothing sigma
+            depth_scale: Depth intensity multiplier
             save_depth: Whether to save depth maps
             progress: Gradio progress tracker
 
@@ -241,7 +248,8 @@ class AlbedoToNormalConverter:
                 depth_img, normal_img = self.process_image(
                     image,
                     smooth_kernel_size=smooth_kernel_size,
-                    smooth_sigma=smooth_sigma
+                    smooth_sigma=smooth_sigma,
+                    depth_scale=depth_scale
                 )
 
                 # Save outputs
@@ -307,6 +315,11 @@ def create_gradio_interface():
                             minimum=0.1, maximum=5.0, step=0.1, value=1.0,
                             label="Smoothing Sigma"
                         )
+                        single_depth_scale = gr.Slider(
+                            minimum=0.1, maximum=10.0, step=0.1, value=1.0,
+                            label="Depth Intensity (higher = more pronounced normals)",
+                            info="Multiplier for depth gradients"
+                        )
 
                     single_btn = gr.Button("Generate Maps", variant="primary")
 
@@ -315,8 +328,8 @@ def create_gradio_interface():
                     single_normal_output = gr.Image(label="Normal Map")
 
             single_btn.click(
-                fn=lambda img, k, s: converter.process_image(img, int(k), s),
-                inputs=[single_input, single_smooth_kernel, single_smooth_sigma],
+                fn=lambda img, k, s, d: converter.process_image(img, int(k), s, d),
+                inputs=[single_input, single_smooth_kernel, single_smooth_sigma, single_depth_scale],
                 outputs=[single_depth_output, single_normal_output]
             )
 
@@ -343,6 +356,11 @@ def create_gradio_interface():
                             minimum=0.1, maximum=5.0, step=0.1, value=1.0,
                             label="Smoothing Sigma"
                         )
+                        batch_depth_scale = gr.Slider(
+                            minimum=0.1, maximum=10.0, step=0.1, value=1.0,
+                            label="Depth Intensity (higher = more pronounced normals)",
+                            info="Multiplier for depth gradients"
+                        )
                         batch_save_depth = gr.Checkbox(
                             value=True,
                             label="Save Depth Maps"
@@ -355,14 +373,15 @@ def create_gradio_interface():
                     batch_results = gr.Textbox(label="Processed Files", lines=15)
 
             batch_btn.click(
-                fn=lambda inp, out, k, s, save_d: converter.process_folder(
-                    inp, out, int(k), s, save_d
+                fn=lambda inp, out, k, s, d, save_d: converter.process_folder(
+                    inp, out, int(k), s, d, save_d
                 ),
                 inputs=[
                     batch_input_folder,
                     batch_output_folder,
                     batch_smooth_kernel,
                     batch_smooth_sigma,
+                    batch_depth_scale,
                     batch_save_depth
                 ],
                 outputs=[batch_status, batch_results]
