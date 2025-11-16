@@ -76,7 +76,10 @@ class AlbedoToNormalConverter:
         depth_map: np.ndarray,
         smooth_kernel_size: int = 5,
         smooth_sigma: float = 1.0,
-        depth_scale: float = 1.0
+        depth_scale: float = 1.0,
+        albedo_image: np.ndarray = None,
+        detail_blend: float = 0.0,
+        detail_strength: float = 1.0
     ) -> np.ndarray:
         """
         Convert a depth map to a normal map
@@ -86,6 +89,9 @@ class AlbedoToNormalConverter:
             smooth_kernel_size: Size of Gaussian blur kernel (must be odd)
             smooth_sigma: Sigma value for Gaussian blur
             depth_scale: Multiplier for depth gradients (higher = more pronounced normals)
+            albedo_image: Optional RGB albedo image for traditional detail extraction
+            detail_blend: Blend factor (0=depth only, 1=traditional only, 0.5=50/50 mix)
+            detail_strength: Strength multiplier for traditional detail normals
 
         Returns:
             Normal map as uint8 RGB image (H, W, 3)
@@ -115,6 +121,16 @@ class AlbedoToNormalConverter:
         Nx[1:-1, 1:-1] = -(depth[1:-1, 2:] - depth[1:-1, :-2]) * 0.5 * depth_scale
         Ny[1:-1, 1:-1] = -(depth[2:, 1:-1] - depth[:-2, 1:-1]) * 0.5 * depth_scale
 
+        # Blend with traditional normals if albedo image provided
+        if albedo_image is not None and detail_blend > 0:
+            trad_Nx, trad_Ny, trad_Nz = self.traditional_normals_from_albedo(
+                albedo_image, detail_strength
+            )
+            # Blend the normal components
+            Nx = Nx * (1 - detail_blend) + trad_Nx * detail_blend
+            Ny = Ny * (1 - detail_blend) + trad_Ny * detail_blend
+            Nz = Nz * (1 - detail_blend) + trad_Nz * detail_blend
+        
         # Normalize the normal vectors
         norm = np.sqrt(Nx**2 + Ny**2 + Nz**2)
         # Avoid division by zero
@@ -133,12 +149,56 @@ class AlbedoToNormalConverter:
 
         return normal_map_visual
 
+    def traditional_normals_from_albedo(
+        self,
+        albedo_image: np.ndarray,
+        detail_strength: float = 1.0
+    ) -> np.ndarray:
+        """
+        Generate normal map from albedo using traditional heightmap technique
+        
+        Args:
+            albedo_image: RGB albedo texture (H, W, 3)
+            detail_strength: Strength multiplier for fine details
+            
+        Returns:
+            Normal map components (Nx, Ny, Nz) as float32 arrays
+        """
+        # Convert to grayscale to use as heightmap
+        gray = cv2.cvtColor(albedo_image, cv2.COLOR_RGB2GRAY).astype(np.float32)
+        
+        # Apply bilateral filter to preserve edges while smoothing
+        gray = cv2.bilateralFilter(gray, 5, 50, 50)
+        
+        # Normalize to 0-1 range
+        gray = gray / 255.0
+        
+        H, W = gray.shape
+        
+        # Initialize normal components
+        Nx = np.zeros((H, W), dtype=np.float32)
+        Ny = np.zeros((H, W), dtype=np.float32)
+        Nz = np.ones((H, W), dtype=np.float32)
+        
+        # Compute Sobel gradients for fine detail capture
+        sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        
+        # Apply detail strength
+        Nx = -sobel_x * detail_strength
+        Ny = -sobel_y * detail_strength
+        
+        return Nx, Ny, Nz
+
+
     def process_image(
         self,
         image: Image.Image,
         smooth_kernel_size: int = 5,
         smooth_sigma: float = 1.0,
         depth_scale: float = 1.0,
+        detail_blend: float = 0.0,
+        detail_strength: float = 1.0,
         progress=None
     ) -> Tuple[Image.Image, Image.Image]:
         """
@@ -149,6 +209,8 @@ class AlbedoToNormalConverter:
             smooth_kernel_size: Smoothing kernel size
             smooth_sigma: Smoothing sigma
             depth_scale: Depth intensity multiplier
+            detail_blend: Blend factor for traditional detail normals
+            detail_strength: Strength of traditional detail capture
             progress: Gradio progress callback
 
         Returns:
@@ -178,7 +240,10 @@ class AlbedoToNormalConverter:
             depth,
             smooth_kernel_size=smooth_kernel_size,
             smooth_sigma=smooth_sigma,
-            depth_scale=depth_scale
+            depth_scale=depth_scale,
+            albedo_image=img_np,
+            detail_blend=detail_blend,
+            detail_strength=detail_strength
         )
 
         # Normalize depth for visualization
@@ -195,6 +260,8 @@ class AlbedoToNormalConverter:
         smooth_kernel_size: int = 5,
         smooth_sigma: float = 1.0,
         depth_scale: float = 1.0,
+        detail_blend: float = 0.0,
+        detail_strength: float = 1.0,
         save_depth: bool = True,
         progress=gr.Progress()
     ) -> Tuple[str, List[str]]:
@@ -207,6 +274,8 @@ class AlbedoToNormalConverter:
             smooth_kernel_size: Smoothing kernel size
             smooth_sigma: Smoothing sigma
             depth_scale: Depth intensity multiplier
+            detail_blend: Blend factor for traditional detail normals
+            detail_strength: Strength of traditional detail capture
             save_depth: Whether to save depth maps
             progress: Gradio progress tracker
 
@@ -249,7 +318,9 @@ class AlbedoToNormalConverter:
                     image,
                     smooth_kernel_size=smooth_kernel_size,
                     smooth_sigma=smooth_sigma,
-                    depth_scale=depth_scale
+                    depth_scale=depth_scale,
+                    detail_blend=detail_blend,
+                    detail_strength=detail_strength
                 )
 
                 # Save outputs
@@ -320,6 +391,16 @@ def create_gradio_interface():
                             label="Depth Intensity (higher = more pronounced normals)",
                             info="Multiplier for depth gradients"
                         )
+                        single_detail_blend = gr.Slider(
+                            minimum=0.0, maximum=1.0, step=0.05, value=0.0,
+                            label="Detail Blend (0=depth only, 1=texture details only)",
+                            info="Mix between depth-based and traditional texture normals"
+                        )
+                        single_detail_strength = gr.Slider(
+                            minimum=0.1, maximum=5.0, step=0.1, value=1.0,
+                            label="Detail Strength (fine texture detail intensity)",
+                            info="Strength of traditional detail capture"
+                        )
 
                     single_btn = gr.Button("Generate Maps", variant="primary")
 
@@ -328,8 +409,8 @@ def create_gradio_interface():
                     single_normal_output = gr.Image(label="Normal Map")
 
             single_btn.click(
-                fn=lambda img, k, s, d: converter.process_image(img, int(k), s, d),
-                inputs=[single_input, single_smooth_kernel, single_smooth_sigma, single_depth_scale],
+                fn=lambda img, k, s, d, db, ds: converter.process_image(img, int(k), s, d, db, ds),
+                inputs=[single_input, single_smooth_kernel, single_smooth_sigma, single_depth_scale, single_detail_blend, single_detail_strength],
                 outputs=[single_depth_output, single_normal_output]
             )
 
@@ -361,6 +442,16 @@ def create_gradio_interface():
                             label="Depth Intensity (higher = more pronounced normals)",
                             info="Multiplier for depth gradients"
                         )
+                        batch_detail_blend = gr.Slider(
+                            minimum=0.0, maximum=1.0, step=0.05, value=0.0,
+                            label="Detail Blend (0=depth only, 1=texture details only)",
+                            info="Mix between depth-based and traditional texture normals"
+                        )
+                        batch_detail_strength = gr.Slider(
+                            minimum=0.1, maximum=5.0, step=0.1, value=1.0,
+                            label="Detail Strength (fine texture detail intensity)",
+                            info="Strength of traditional detail capture"
+                        )
                         batch_save_depth = gr.Checkbox(
                             value=True,
                             label="Save Depth Maps"
@@ -373,8 +464,8 @@ def create_gradio_interface():
                     batch_results = gr.Textbox(label="Processed Files", lines=15)
 
             batch_btn.click(
-                fn=lambda inp, out, k, s, d, save_d: converter.process_folder(
-                    inp, out, int(k), s, d, save_d
+                fn=lambda inp, out, k, s, d, db, ds, save_d: converter.process_folder(
+                    inp, out, int(k), s, d, db, ds, save_d
                 ),
                 inputs=[
                     batch_input_folder,
@@ -382,6 +473,8 @@ def create_gradio_interface():
                     batch_smooth_kernel,
                     batch_smooth_sigma,
                     batch_depth_scale,
+                    batch_detail_blend,
+                    batch_detail_strength,
                     batch_save_depth
                 ],
                 outputs=[batch_status, batch_results]
