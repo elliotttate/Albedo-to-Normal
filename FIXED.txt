@@ -1,0 +1,54 @@
+================================================================
+ISSUE FIXED - CORRECT REPOSITORY URL
+================================================================
+
+The repository URL has been corrected in all files.
+
+CORRECT URL:
+https://github.com/ByteDance-Seed/Depth-Anything-3
+
+(The old incorrect URL was removed from all scripts)
+
+================================================================
+TO INSTALL NOW - RUN THIS:
+================================================================
+
+Windows:
+--------
+install_depth_anything.bat
+
+
+Linux/Mac:
+----------
+chmod +x install_depth_anything.sh
+./install_depth_anything.sh
+
+
+This will:
+1. Clone from the CORRECT repository
+2. Install Depth Anything V3
+3. Verify installation
+4. Let you know when ready
+
+================================================================
+WHAT WAS UPDATED:
+================================================================
+
+✓ install_depth_anything.bat
+✓ install_depth_anything.sh
+✓ setup.bat
+✓ setup.sh
+✓ app.py (error messages)
+✓ INSTALL.md (documentation)
+✓ requirements.txt (comments)
+✓ .gitignore
+
+All files now use the correct ByteDance-Seed repository.
+
+================================================================
+READY TO GO!
+================================================================
+
+Run: install_depth_anything.bat
+
+This should work now!

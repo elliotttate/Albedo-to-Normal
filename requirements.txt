@@ -1,0 +1,17 @@
+# Core dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# Gradio for GUI
+gradio>=4.0.0
+
+# Depth Anything 3
+# Install separately:
+# git clone https://github.com/ByteDance-Seed/Depth-Anything-3.git
+# cd Depth-Anything-3 && pip install -e ".[app]"
+
+# Optional: For better performance
+# tensorrt  # Uncomment if using NVIDIA TensorRT for optimization

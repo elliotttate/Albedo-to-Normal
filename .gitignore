@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Depth Anything 3 installation
+Depth-Anything-3/
+
+# Model cache
+.cache/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# HuggingFace cache
+.huggingface/
+
+# Output files
+output/
+*.png
+*.jpg
+*.jpeg
+!examples/*.png
+!examples/*.jpg
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+START_HERE.txt
