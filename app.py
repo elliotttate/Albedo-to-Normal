@@ -124,7 +124,7 @@ class AlbedoToNormalConverter:
         # Blend with traditional normals if albedo image provided
         if albedo_image is not None and detail_blend > 0:
             trad_Nx, trad_Ny, trad_Nz = self.traditional_normals_from_albedo(
-                albedo_image, detail_strength
+                albedo_image, detail_strength, target_size=(H, W)
             )
             # Blend the normal components
             Nx = Nx * (1 - detail_blend) + trad_Nx * detail_blend
@@ -152,42 +152,52 @@ class AlbedoToNormalConverter:
     def traditional_normals_from_albedo(
         self,
         albedo_image: np.ndarray,
-        detail_strength: float = 1.0
+        detail_strength: float = 1.0,
+        target_size: tuple = None
     ) -> np.ndarray:
         """
         Generate normal map from albedo using traditional heightmap technique
-        
+
         Args:
             albedo_image: RGB albedo texture (H, W, 3)
             detail_strength: Strength multiplier for fine details
-            
+            target_size: Optional (H, W) to resize output to match depth map
+
         Returns:
             Normal map components (Nx, Ny, Nz) as float32 arrays
         """
         # Convert to grayscale to use as heightmap
         gray = cv2.cvtColor(albedo_image, cv2.COLOR_RGB2GRAY).astype(np.float32)
-        
+
         # Apply bilateral filter to preserve edges while smoothing
         gray = cv2.bilateralFilter(gray, 5, 50, 50)
-        
+
         # Normalize to 0-1 range
         gray = gray / 255.0
-        
+
         H, W = gray.shape
-        
+
         # Initialize normal components
         Nx = np.zeros((H, W), dtype=np.float32)
         Ny = np.zeros((H, W), dtype=np.float32)
         Nz = np.ones((H, W), dtype=np.float32)
-        
+
         # Compute Sobel gradients for fine detail capture
         sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
         sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-        
+
         # Apply detail strength
         Nx = -sobel_x * detail_strength
         Ny = -sobel_y * detail_strength
-        
+
+        # Resize to target size if specified
+        if target_size is not None:
+            target_H, target_W = target_size
+            if (H, W) != (target_H, target_W):
+                Nx = cv2.resize(Nx, (target_W, target_H), interpolation=cv2.INTER_LINEAR)
+                Ny = cv2.resize(Ny, (target_W, target_H), interpolation=cv2.INTER_LINEAR)
+                Nz = cv2.resize(Nz, (target_W, target_H), interpolation=cv2.INTER_LINEAR)
+
         return Nx, Ny, Nz
 
 
@@ -220,14 +230,36 @@ class AlbedoToNormalConverter:
             self.load_model(progress)
 
         # Convert to numpy array
-        img_np = np.array(image.convert("RGB"))
+        if isinstance(image, np.ndarray):
+            # Already a numpy array from Gradio
+            img_np = image
+            if img_np.ndim == 2:
+                # Grayscale, convert to RGB
+                img_np = np.stack([img_np] * 3, axis=-1)
+        else:
+            # PIL Image
+            img_np = np.array(image.convert("RGB"))
+
+        # Store original resolution
+        original_height, original_width = img_np.shape[:2]
+
+        # Calculate the maximum dimension to use as process_res
+        # This ensures the model processes at full resolution
+        max_dimension = max(original_height, original_width)
+
+        # Round up to nearest multiple of 14 (DA3's patch size)
+        process_res = ((max_dimension + 13) // 14) * 14
 
         if progress:
-            progress(0.3, desc="Running depth estimation...")
+            progress(0.3, desc=f"Running depth estimation at full resolution ({original_width}x{original_height})...")
 
-        # Run depth inference
+        # Run depth inference at full resolution by setting process_res
         try:
-            prediction = self.model.inference([img_np])
+            prediction = self.model.inference(
+                [img_np],
+                process_res=process_res,
+                process_res_method="upper_bound_resize"
+            )
             depth = prediction.depth[0]  # Shape: (H, W)
         except Exception as e:
             raise RuntimeError(f"Depth estimation failed: {str(e)}")
@@ -375,7 +407,10 @@ def create_gradio_interface():
         with gr.Tab("Single Image"):
             with gr.Row():
                 with gr.Column():
-                    single_input = gr.Image(type="pil", label="Input Albedo Texture")
+                    single_input = gr.Image(
+                        label="Input Albedo Texture",
+                        type="pil"
+                    )
 
                     with gr.Accordion("Advanced Settings", open=False):
                         single_smooth_kernel = gr.Slider(
@@ -387,7 +422,7 @@ def create_gradio_interface():
                             label="Smoothing Sigma"
                         )
                         single_depth_scale = gr.Slider(
-                            minimum=0.1, maximum=10.0, step=0.1, value=1.0,
+                            minimum=0.1, maximum=100.0, step=0.5, value=1.0,
                             label="Depth Intensity (higher = more pronounced normals)",
                             info="Multiplier for depth gradients"
                         )
@@ -405,8 +440,16 @@ def create_gradio_interface():
                     single_btn = gr.Button("Generate Maps", variant="primary")
 
                 with gr.Column():
-                    single_depth_output = gr.Image(label="Depth Map (Visualization)")
-                    single_normal_output = gr.Image(label="Normal Map")
+                    single_depth_output = gr.Image(
+                        label="Depth Map (Visualization)",
+                        format="png",
+                        type="pil"
+                    )
+                    single_normal_output = gr.Image(
+                        label="Normal Map",
+                        format="png",
+                        type="pil"
+                    )
 
             single_btn.click(
                 fn=lambda img, k, s, d, db, ds: converter.process_image(img, int(k), s, d, db, ds),
@@ -438,7 +481,7 @@ def create_gradio_interface():
                             label="Smoothing Sigma"
                         )
                         batch_depth_scale = gr.Slider(
-                            minimum=0.1, maximum=10.0, step=0.1, value=1.0,
+                            minimum=0.1, maximum=100.0, step=0.5, value=1.0,
                             label="Depth Intensity (higher = more pronounced normals)",
                             info="Multiplier for depth gradients"
                         )
